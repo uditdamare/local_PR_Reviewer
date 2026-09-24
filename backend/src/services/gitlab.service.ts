@@ -8,6 +8,7 @@ import {
   GitLabDiff,
   GitLabFile,
   GitLabMergeRequest,
+  GitLabNote,
   GitLabTreeItem,
 } from "../types/gitlab.types";
 
@@ -121,5 +122,25 @@ export class GitLabService {
         "base64",
       ).toString("utf8"),
     };
+  }
+
+  /**
+   * Post a general (non-inline) comment on a merge request. Always a
+   * separate, explicit action from running a review — this project never
+   * posts automatically as a side effect of checking a diff.
+   */
+  async createMergeRequestNote(
+    projectId: string,
+    mergeRequestIid: number,
+    body: string,
+  ): Promise<GitLabNote> {
+    const encodedProjectId = encodeURIComponent(projectId);
+
+    const response = await this.client.post<GitLabNote>(
+      `/projects/${encodedProjectId}/merge_requests/${mergeRequestIid}/notes`,
+      { body },
+    );
+
+    return response.data;
   }
 }

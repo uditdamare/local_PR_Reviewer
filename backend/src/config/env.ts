@@ -7,6 +7,13 @@ function readInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readFloat(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export const env = {
   port: readInt("PORT", 4000),
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
@@ -31,6 +38,14 @@ export const env = {
   },
   reviewBatchMaxDiffChars: readInt("REVIEW_BATCH_MAX_DIFF_CHARS", 6000),
   reviewRelevantFileMaxChars: readInt("REVIEW_RELEVANT_FILE_MAX_CHARS", 3000),
+  // Below this, a pattern match is treated as an abstain rather than a
+  // reported finding — the model's self-reported confidence is a signal,
+  // not something trusted directly. See PROJECT_BRIEF.md's checklist item
+  // "Confidence-threshold logic — stay silent / abstain below a set bar".
+  productionRiskConfidenceThreshold: readFloat(
+    "PRODUCTION_RISK_CONFIDENCE_THRESHOLD",
+    0.6,
+  ),
 };
 
 function requiredEnv(name: string): string {

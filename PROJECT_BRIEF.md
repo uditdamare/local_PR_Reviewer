@@ -185,7 +185,10 @@ source turns up.
       pipeline, not yet the pattern-matching/confidence/abstain logic below.
 - [x] GitLab diff fetch (via GitLab REST API) — reused existing
       `GitLabService` as-is, no changes needed.
-- [ ] GitLab MR comment post capability (via GitLab REST API)
+- [x] GitLab MR comment post capability (via GitLab REST API) —
+      `GitLabService.createMergeRequestNote` plus a `post_production_risk_comment`
+      MCP tool, deliberately kept separate from `check_production_risk` so
+      posting is always an explicit second step, not a side effect of checking.
 - [ ] Postgres table of failure patterns — **patterns sourced and written
       up** (6/6, name/description/example signature/source postmortem) in
       [backend/src/patterns/failure-patterns.ts](backend/src/patterns/failure-patterns.ts)
