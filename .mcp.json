@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pr-reviewer": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/server.ts"],
+      "cwd": "backend",
+      "env": {
+        "GITLAB_URL": "${GITLAB_URL}",
+        "GITLAB_TOKEN": "${GITLAB_TOKEN}"
+      }
+    }
+  }
+}
