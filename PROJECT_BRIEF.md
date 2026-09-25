@@ -189,16 +189,30 @@ source turns up.
       `GitLabService.createMergeRequestNote` plus a `post_production_risk_comment`
       MCP tool, deliberately kept separate from `check_production_risk` so
       posting is always an explicit second step, not a side effect of checking.
-- [ ] Postgres table of failure patterns — **patterns sourced and written
-      up** (6/6, name/description/example signature/source postmortem) in
+- [x] Postgres table of failure patterns — `failure_patterns` table via
+      Prisma ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)),
+      seeded from
       [backend/src/patterns/failure-patterns.ts](backend/src/patterns/failure-patterns.ts)
-      as a static seed list; the actual Postgres table to load them into
-      doesn't exist yet.
-- [ ] Prompt + LLM call: diff + patterns in, structured JSON out (pattern,
-      confidence, reasoning, or abstain)
-- [ ] Format JSON into a readable output (MR comment or MCP tool response)
-- [ ] Confidence-threshold logic — stay silent / abstain below a set bar
+      ([backend/prisma/seed.ts](backend/prisma/seed.ts)). Verified against a
+      real local Postgres via docker-compose, not just typechecked.
+- [x] Prompt + LLM call: diff + patterns in, structured JSON out (pattern,
+      confidence, reasoning, or abstain) —
+      [backend/src/services/production-risk.service.ts](backend/src/services/production-risk.service.ts)
+      + [backend/src/utils/production-risk-prompt.ts](backend/src/utils/production-risk-prompt.ts),
+      exposed as the `check_production_risk` MCP tool. Requires one
+      assessment per pattern per batch, unknown pattern ids dropped, line
+      numbers validated against real diff hunks.
+- [x] Format JSON into a readable output (MR comment or MCP tool response) —
+      [backend/src/utils/production-risk-comment.ts](backend/src/utils/production-risk-comment.ts)
+      formats the JSON as Markdown for the `post_production_risk_comment` tool.
+- [x] Confidence-threshold logic — stay silent / abstain below a set bar —
+      `PRODUCTION_RISK_CONFIDENCE_THRESHOLD` env var (default 0.6), enforced
+      server-side in `ProductionRiskService`, verified with both a
+      below-threshold and an overridden-threshold real run.
 - [ ] Error handling: huge diffs, LLM call failures, GitLab API rate limits
+      — diff batching and per-batch try/catch exist (inherited from the
+      earlier reviewer); GitLab API rate-limit handling specifically not
+      addressed yet.
 - [ ] Deployed somewhere always-on (if webhook/CI mode is also built) — not
       required if MCP-only for v1
 - [ ] Evaluated against 10-15 real MRs with actual precision/recall/abstain

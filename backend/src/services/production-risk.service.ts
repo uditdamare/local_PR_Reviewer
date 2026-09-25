@@ -14,6 +14,7 @@ import {
 import { filterReviewableDiffs } from "../utils/diff-filter";
 import { batchDiffs } from "../utils/diff-batch";
 import { getNewFileLineRanges, isLineWithinRanges } from "../utils/diff-hunks";
+import { formatErrorForLog } from "../utils/format-error";
 
 export class ProductionRiskService {
   constructor(
@@ -56,8 +57,7 @@ export class ProductionRiskService {
         batchResults.push(validated);
       } catch (error) {
         console.error(
-          `Production-risk batch ${index + 1}/${batches.length} failed:`,
-          error,
+          `Production-risk batch ${index + 1}/${batches.length} failed: ${formatErrorForLog(error)}`,
         );
       }
     }

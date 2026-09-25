@@ -5,6 +5,7 @@ import {
 } from "express";
 
 import { GitLabService } from "../services/gitlab.service";
+import { formatErrorForLog } from "../utils/format-error";
 
 const router = Router();
 
@@ -68,9 +69,7 @@ router.get(
 
     } catch (error: any) {
 
-      console.error(
-        error.response?.data || error,
-      );
+      console.error(formatErrorForLog(error));
 
       return res.status(500).json({
         error:

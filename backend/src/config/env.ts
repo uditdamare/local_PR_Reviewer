@@ -35,6 +35,10 @@ export const env = {
     apiKey: process.env.LLM_API_KEY ?? "ollama",
     model: process.env.LLM_MODEL ?? "qwen2.5-coder:0.5b",
     requestTimeoutMs: readInt("LLM_REQUEST_TIMEOUT_MS", 30 * 60 * 1000),
+    // Retries only on retryable failures (429, 5xx, network errors) — a
+    // 400/401/404 won't succeed on retry, so those fail immediately.
+    maxRetries: readInt("LLM_MAX_RETRIES", 3),
+    retryBaseDelayMs: readInt("LLM_RETRY_BASE_DELAY_MS", 1000),
   },
   reviewBatchMaxDiffChars: readInt("REVIEW_BATCH_MAX_DIFF_CHARS", 6000),
   reviewRelevantFileMaxChars: readInt("REVIEW_RELEVANT_FILE_MAX_CHARS", 3000),
