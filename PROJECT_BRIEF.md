@@ -202,6 +202,39 @@ source turns up.
       exposed as the `check_production_risk` MCP tool. Requires one
       assessment per pattern per batch, unknown pattern ids dropped, line
       numbers validated against real diff hunks.
+
+  **Second mode added**: since this tool is always invoked by a human
+  through an already-running Claude session, that session can do the
+  pattern-matching reasoning itself instead of paying for a separate
+  hosted LLM call. `prepare_production_risk_check` fetches the diff +
+  patterns and returns the exact same prompt/instructions an LLM would get
+  (no LLM call, no API key needed); the calling agent reasons over it
+  directly; `finalize_production_risk_check` takes the agent's own
+  assessments and runs them through the identical validation the automated
+  path applies (unknown pattern ids dropped, line numbers checked, low
+  confidence downgraded to abstain) — an agent's self-reported confidence
+  is trusted no more than a hosted model's. `post_production_risk_comment`
+  accepts either path's output. Verified end-to-end against the real MR
+  used to develop this project (project 82, MR 1142), including
+  adversarial inputs (unknown pattern id, out-of-range line number) to
+  confirm validation applies identically regardless of who reasoned.
+
+  **This is now the primary, de facto only working path** — this
+  deployment has no LLM API credits provisioned (Gemini free tier hit its
+  5 req/min quota repeatedly during testing; Anthropic/OpenAI need a paid
+  key nobody's getting). Rather than lean on a Claude-Code-specific slash
+  command to steer agents toward `prepare`/`finalize`, that guidance is
+  written directly into the MCP tools' own `description` fields —
+  protocol-level, so any MCP-compatible agent (not just Claude Code with
+  our `.claude/commands/` files installed) reads it and knows to use
+  `prepare_production_risk_check` by default without any extra setup.
+  `check_production_risk`'s own description now says plainly it needs a
+  credited LLM provider most deployments won't have. Two optional Claude
+  Code slash commands exist as a convenience on top of this
+  (`.claude/commands/check-mr.md` for the agent-reasoned path,
+  `check-mr-auto.md` for the automated one) but nothing depends on them —
+  the MCP server works correctly for a bare MCP client with no slash
+  commands installed at all.
 - [x] Format JSON into a readable output (MR comment or MCP tool response) —
       [backend/src/utils/production-risk-comment.ts](backend/src/utils/production-risk-comment.ts)
       formats the JSON as Markdown for the `post_production_risk_comment` tool.

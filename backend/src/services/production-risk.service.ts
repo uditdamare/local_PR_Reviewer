@@ -16,12 +16,28 @@ import { batchDiffs } from "../utils/diff-batch";
 import { getNewFileLineRanges, isLineWithinRanges } from "../utils/diff-hunks";
 import { formatErrorForLog } from "../utils/format-error";
 
+export interface PreparedProductionRiskCheck {
+  patterns: FailurePattern[];
+  diffs: GitLabDiff[];
+  systemPrompt: string;
+  prompt: string;
+}
+
+// A raw assessment as handed in by whoever is doing the reasoning — an LLM
+// response (parsed JSON) or an agent's own directly-provided array. Same
+// shape either way; sanitizeAssessments() doesn't care which produced it.
+type RawAssessment = Partial<PatternAssessment> & { patternId?: unknown };
+
 export class ProductionRiskService {
   constructor(
     private readonly gitlabService: GitLabService,
     private readonly llmService: LLMService,
   ) {}
 
+  /**
+   * The fully-automated path: fetches the diff, calls the configured LLM
+   * provider itself, validates the result. Costs an LLM API call.
+   */
   async checkMergeRequest(
     projectId: string,
     mergeRequestIid: number,
@@ -51,8 +67,9 @@ export class ProductionRiskService {
           prompt,
         );
 
-        const assessments = this.parseAssessments(response, patterns);
-        const validated = this.validateAssessmentLines(assessments, batch);
+        const rawAssessments = this.parseLlmJson(response);
+        const sanitized = this.sanitizeAssessments(rawAssessments, patterns);
+        const validated = this.validateAssessmentLines(sanitized, batch);
 
         batchResults.push(validated);
       } catch (error) {
@@ -62,17 +79,64 @@ export class ProductionRiskService {
       }
     }
 
-    const merged = this.mergeAssessments(batchResults, patterns);
-    const threshold = env.productionRiskConfidenceThreshold;
+    return this.finalize(batchResults, patterns, batches.length);
+  }
+
+  /**
+   * The agent-reasoned path, part 1: fetches the diff and patterns and
+   * returns the exact same prompt an LLM would be given, but doesn't call
+   * any LLM itself. Meant for a human's Claude Code/Desktop session to read
+   * and reason over directly — costs no separate LLM API call, since the
+   * calling agent already is one. Call finalizeAgentAssessments() next with
+   * the agent's own answer.
+   */
+  async prepareCheck(
+    projectId: string,
+    mergeRequestIid: number,
+  ): Promise<PreparedProductionRiskCheck> {
+    const patterns = await this.loadPatterns();
+
+    const allDiffs = await this.gitlabService.getMergeRequestDiffs(
+      projectId,
+      mergeRequestIid,
+    );
+
+    const diffs = filterReviewableDiffs(allDiffs);
 
     return {
-      assessments: merged.map((assessment) =>
-        this.applyConfidenceThreshold(assessment, threshold),
-      ),
-      batchesRun: batches.length,
-      patternsChecked: patterns.length,
-      confidenceThreshold: threshold,
+      patterns,
+      diffs,
+      systemPrompt: PRODUCTION_RISK_SYSTEM_PROMPT,
+      prompt: buildProductionRiskPrompt(diffs, patterns),
     };
+  }
+
+  /**
+   * The agent-reasoned path, part 2: takes assessments the calling agent
+   * produced itself (following prepareCheck's prompt/instructions) and runs
+   * them through the exact same validation checkMergeRequest applies to an
+   * LLM's response — unknown pattern ids dropped, line numbers checked
+   * against the real diff hunks, confidence thresholded. An agent's
+   * self-reported confidence is trusted no more than a hosted model's.
+   */
+  async finalizeAgentAssessments(
+    projectId: string,
+    mergeRequestIid: number,
+    rawAssessments: unknown,
+  ): Promise<ProductionRiskReview> {
+    const patterns = await this.loadPatterns();
+
+    const allDiffs = await this.gitlabService.getMergeRequestDiffs(
+      projectId,
+      mergeRequestIid,
+    );
+
+    const diffs = filterReviewableDiffs(allDiffs);
+
+    const sanitized = this.sanitizeAssessments(rawAssessments, patterns);
+    const validated = this.validateAssessmentLines(sanitized, diffs);
+
+    return this.finalize([validated], patterns, 1);
   }
 
   async loadPatterns(): Promise<FailurePattern[]> {
@@ -93,10 +157,25 @@ export class ProductionRiskService {
     }));
   }
 
-  private parseAssessments(
-    response: string,
+  private finalize(
+    batchResults: PatternAssessment[][],
     patterns: FailurePattern[],
-  ): PatternAssessment[] {
+    batchesRun: number,
+  ): ProductionRiskReview {
+    const merged = this.mergeAssessments(batchResults, patterns);
+    const threshold = env.productionRiskConfidenceThreshold;
+
+    return {
+      assessments: merged.map((assessment) =>
+        this.applyConfidenceThreshold(assessment, threshold),
+      ),
+      batchesRun,
+      patternsChecked: patterns.length,
+      confidenceThreshold: threshold,
+    };
+  }
+
+  private parseLlmJson(response: string): unknown {
     let cleaned = response.trim();
 
     if (cleaned.startsWith("```")) {
@@ -106,27 +185,40 @@ export class ProductionRiskService {
         .replace(/\s*```$/i, "");
     }
 
-    let parsed: unknown;
     try {
-      parsed = JSON.parse(cleaned);
+      return JSON.parse(cleaned);
     } catch {
       throw new Error(`LLM returned invalid JSON:\n${response}`);
     }
+  }
 
+  // Shared by both paths: never trust patternId/abstain/confidence/etc as
+  // given, whether they came from a hosted LLM's JSON or an agent's direct
+  // input. Unknown pattern ids are dropped rather than passed through.
+  private sanitizeAssessments(
+    rawInput: unknown,
+    patterns: FailurePattern[],
+  ): PatternAssessment[] {
     const knownPatternIds = new Set(patterns.map((pattern) => pattern.id));
-    const rawAssessments = (parsed as { assessments?: unknown[] })?.assessments;
+
+    const rawAssessments = Array.isArray(rawInput)
+      ? rawInput
+      : (rawInput as { assessments?: unknown[] })?.assessments;
 
     if (!Array.isArray(rawAssessments)) {
-      throw new Error(`LLM response missing "assessments" array:\n${response}`);
+      throw new Error(
+        `Expected an "assessments" array, got: ${JSON.stringify(rawInput)}`,
+      );
     }
 
     const assessments: PatternAssessment[] = [];
 
     for (const raw of rawAssessments) {
-      const item = raw as Partial<PatternAssessment> & { patternId?: unknown };
+      const item = raw as RawAssessment;
 
-      // Drop anything claiming a pattern outside the curated set — the
-      // model isn't allowed to invent findings under an unknown pattern.
+      // Drop anything claiming a pattern outside the curated set — neither
+      // an LLM nor an agent is allowed to invent a finding under an
+      // unknown pattern.
       if (typeof item.patternId !== "string" || !knownPatternIds.has(item.patternId)) {
         continue;
       }
@@ -175,7 +267,7 @@ export class ProductionRiskService {
       return {
         ...assessment,
         line: null,
-        reasoning: `${assessment.reasoning} (line number reported by the model could not be verified against the diff and was removed)`,
+        reasoning: `${assessment.reasoning} (line number reported could not be verified against the diff and was removed)`,
       };
     });
   }
@@ -220,10 +312,10 @@ export class ProductionRiskService {
     });
   }
 
-  // The model's self-reported confidence is a signal, not something trusted
-  // directly — a finding below the configured bar gets converted to an
-  // abstain here, distinct from the model abstaining on its own, so a low-
-  // confidence guess can't reach a caller looking only at `abstain`.
+  // The model's (or agent's) self-reported confidence is a signal, not
+  // something trusted directly — a finding below the configured bar gets
+  // converted to an abstain here, distinct from abstaining on its own, so a
+  // low-confidence guess can't reach a caller looking only at `abstain`.
   private applyConfidenceThreshold(
     assessment: PatternAssessment,
     threshold: number,
