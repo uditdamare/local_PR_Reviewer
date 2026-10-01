@@ -246,8 +246,32 @@ source turns up.
       — diff batching and per-batch try/catch exist (inherited from the
       earlier reviewer); GitLab API rate-limit handling specifically not
       addressed yet.
-- [ ] Deployed somewhere always-on (if webhook/CI mode is also built) — not
-      required if MCP-only for v1
+- [~] Deployed somewhere always-on — the code/infra side is done and
+      verified, actual hosting is not. Added
+      [backend/src/mcp/http-server.ts](backend/src/mcp/http-server.ts): a
+      stateless Streamable-HTTP MCP entry point (vs. the stdio one Claude
+      Code/Desktop spawns locally) that holds **no GitLab token itself** —
+      every request supplies its own via `Authorization: Bearer <token>`,
+      read per-request from `GitLabService(token)`, never written to disk
+      or cached. This resolves the earlier open "shared token vs. per-user
+      token" question: there's no shared server-side token at all.
+      `GITLAB_TOKEN` is now optional in `env.ts` (only the stdio server
+      needs it). Shared tool-registration logic extracted into
+      [backend/src/mcp/register-tools.ts](backend/src/mcp/register-tools.ts)
+      so stdio and HTTP stay behaviorally identical. A
+      [backend/Dockerfile](backend/Dockerfile) exists and was build-and-run
+      verified for real: built the image, ran it connected to the real
+      Postgres container, and called `prepare_production_risk_check` over
+      actual HTTP with a real GitLab token header — including confirming a
+      bad token fails with GitLab's own 401, no silent fallback. What's
+      still missing: actually deploying it somewhere (Railway/Render/Fly —
+      platform choice and account creation are the user's to make, not
+      something done from here), and a decision on whether to add a static
+      `ALLOWED_HOSTS` once a real hostname exists. Note: claude.ai's web
+      connector UI doesn't support header-based auth as of Oct 2026 (OAuth
+      or public-only) — this HTTP server is designed for Claude Code/
+      Desktop's remote-MCP header support (`claude mcp add --header`)
+      specifically, not the claude.ai website.
 - [ ] Evaluated against 10-15 real MRs with actual precision/recall/abstain
       numbers recorded
 - [ ] README written: problem statement, architecture, failure-pattern list

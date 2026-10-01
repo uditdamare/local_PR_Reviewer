@@ -15,12 +15,26 @@ import {
 export class GitLabService {
   private readonly client: AxiosInstance;
 
-  constructor() {
+  // `token` lets a caller override env.gitlab.token — used by the remote
+  // HTTP MCP server, which never holds anyone's GitLab token itself: each
+  // request supplies its own via an Authorization header, read per-request,
+  // never written to this server's environment or disk. The stdio server
+  // (local Claude Code/Desktop use) keeps using env.gitlab.token as before.
+  constructor(token?: string) {
+    const resolvedToken = token ?? env.gitlab.token;
+
+    if (!resolvedToken) {
+      throw new Error(
+        "No GitLab token available — set GITLAB_TOKEN in the environment, " +
+          "or (for the remote HTTP server) supply an Authorization header.",
+      );
+    }
+
     this.client = axios.create({
       baseURL: `${env.gitlab.url}/api/v4`,
 
       headers: {
-        "PRIVATE-TOKEN": env.gitlab.token,
+        "PRIVATE-TOKEN": resolvedToken,
         Accept: "application/json",
       },
 

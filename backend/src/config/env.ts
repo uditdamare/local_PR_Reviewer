@@ -23,7 +23,12 @@ export const env = {
   maxDiffChars: readInt("MAX_DIFF_CHARS", 60000),
   gitlab: {
     url: requiredEnv("GITLAB_URL"),
-    token: requiredEnv("GITLAB_TOKEN"),
+    // Optional here, not required: the stdio MCP server (local Claude
+    // Code/Desktop) needs this set and GitLabService falls back to it. The
+    // remote HTTP MCP server never reads it — every request supplies its
+    // own token via an Authorization header instead, so this server-side
+    // value is simply unused in that mode.
+    token: process.env.GITLAB_TOKEN,
   },
   // Any OpenAI-compatible chat-completions provider: local Ollama, Gemini's
   // OpenAI-compat endpoint, etc. The base URL is used exactly as given
