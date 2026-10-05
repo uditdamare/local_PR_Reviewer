@@ -58,6 +58,14 @@ export interface GitLabTreeItem {
   mode: string;
 }
 
+export interface GitLabNote {
+  id: number;
+  body: string;
+  author: GitLabUser;
+  created_at: string;
+  system: boolean;
+}
+
 export interface GitLabFile {
   file_name: string;
   file_path: string;

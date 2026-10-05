@@ -7,6 +7,7 @@ import {
 import { GitLabService } from "../services/gitlab.service";
 import { LLMService } from "../services/llm.service";
 import { ReviewService } from "../services/review.service";
+import { formatErrorForLog } from "../utils/format-error";
 
 const router = Router();
 
@@ -59,7 +60,7 @@ router.post(
 
     } catch (error: any) {
 
-      console.error(error);
+      console.error(formatErrorForLog(error));
 
       return res.status(500).json({
         error:

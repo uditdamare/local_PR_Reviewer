@@ -20,6 +20,7 @@ import {
 } from "../utils/diff-hunks";
 import { findUnusedDeclarations } from "../utils/unused-declarations";
 import { scanForSecrets } from "../utils/secret-scan";
+import { formatErrorForLog } from "../utils/format-error";
 
 const REVIEW_SYSTEM_PROMPT = `
 You are an expert software engineer
@@ -150,8 +151,7 @@ export class ReviewService {
         documentationNeeded.push(...batchReview.documentationNeeded);
       } catch (error) {
         console.error(
-          `Review batch ${index + 1}/${batches.length} failed:`,
-          error,
+          `Review batch ${index + 1}/${batches.length} failed: ${formatErrorForLog(error)}`,
         );
       }
     }

@@ -7,6 +7,13 @@ function readInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readFloat(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export const env = {
   port: readInt("PORT", 4000),
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
@@ -16,7 +23,12 @@ export const env = {
   maxDiffChars: readInt("MAX_DIFF_CHARS", 60000),
   gitlab: {
     url: requiredEnv("GITLAB_URL"),
-    token: requiredEnv("GITLAB_TOKEN"),
+    // Optional here, not required: the stdio MCP server (local Claude
+    // Code/Desktop) needs this set and GitLabService falls back to it. The
+    // remote HTTP MCP server never reads it — every request supplies its
+    // own token via an Authorization header instead, so this server-side
+    // value is simply unused in that mode.
+    token: process.env.GITLAB_TOKEN,
   },
   // Any OpenAI-compatible chat-completions provider: local Ollama, Gemini's
   // OpenAI-compat endpoint, etc. The base URL is used exactly as given
@@ -28,9 +40,21 @@ export const env = {
     apiKey: process.env.LLM_API_KEY ?? "ollama",
     model: process.env.LLM_MODEL ?? "qwen2.5-coder:0.5b",
     requestTimeoutMs: readInt("LLM_REQUEST_TIMEOUT_MS", 30 * 60 * 1000),
+    // Retries only on retryable failures (429, 5xx, network errors) — a
+    // 400/401/404 won't succeed on retry, so those fail immediately.
+    maxRetries: readInt("LLM_MAX_RETRIES", 3),
+    retryBaseDelayMs: readInt("LLM_RETRY_BASE_DELAY_MS", 1000),
   },
   reviewBatchMaxDiffChars: readInt("REVIEW_BATCH_MAX_DIFF_CHARS", 6000),
   reviewRelevantFileMaxChars: readInt("REVIEW_RELEVANT_FILE_MAX_CHARS", 3000),
+  // Below this, a pattern match is treated as an abstain rather than a
+  // reported finding — the model's self-reported confidence is a signal,
+  // not something trusted directly. See PROJECT_BRIEF.md's checklist item
+  // "Confidence-threshold logic — stay silent / abstain below a set bar".
+  productionRiskConfidenceThreshold: readFloat(
+    "PRODUCTION_RISK_CONFIDENCE_THRESHOLD",
+    0.6,
+  ),
 };
 
 function requiredEnv(name: string): string {

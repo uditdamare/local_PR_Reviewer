@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { AppError } from "../types/errors";
+import { formatErrorForLog } from "../utils/format-error";
 
 /**
  * Central error handler. Never leaks stack traces or internal messages
@@ -17,6 +18,6 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
-  console.error("Unhandled error:", err);
+  console.error(`Unhandled error: ${formatErrorForLog(err)}`);
   res.status(500).json({ code: "INTERNAL_ERROR", message: "An unexpected error occurred." });
 }

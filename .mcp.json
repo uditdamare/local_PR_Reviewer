@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "pr-reviewer": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/server.ts"],
+      "cwd": "backend"
+    }
+  }
+}
