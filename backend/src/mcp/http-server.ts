@@ -2,7 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import type { Request, Response } from "express";
+import { rateLimit } from "express-rate-limit";
 
+import { prisma } from "../db/prisma";
+import { seedFailurePatterns } from "../db/seed-patterns";
 import { GitLabService } from "../services/gitlab.service";
 import { LLMService } from "../services/llm.service";
 import { ReviewService } from "../services/review.service";
@@ -28,6 +31,17 @@ import { formatErrorForLog } from "../utils/format-error";
 const PORT = Number.parseInt(process.env.HTTP_PORT ?? "8080", 10);
 const HOST = process.env.HTTP_HOST ?? "0.0.0.0";
 const ALLOWED_HOSTS = process.env.ALLOWED_HOSTS?.split(",").map((h) => h.trim());
+
+// Per-IP request cap on /mcp, applied BEFORE the auth check so unauthenticated
+// spam is throttled too. A check is a few calls (prepare, finalize, maybe
+// post), so the default is generous for a person and tight for a script.
+const RATE_LIMIT_WINDOW_MS = Number.parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000", 10);
+const RATE_LIMIT_MAX = Number.parseInt(process.env.RATE_LIMIT_MAX ?? "60", 10);
+
+// Number of reverse-proxy hops in front of this server (Railway/Render/Fly
+// are typically 1). Left unset, every request appears to come from the
+// proxy's own IP and all users would share one rate-limit bucket.
+const TRUST_PROXY = process.env.TRUST_PROXY;
 
 function extractBearerToken(req: Request): string | null {
   const header = req.headers.authorization;
@@ -58,7 +72,26 @@ const app = createMcpExpressApp({
   ...(ALLOWED_HOSTS ? { allowedHosts: ALLOWED_HOSTS } : {}),
 });
 
-app.post("/mcp", async (req: Request, res: Response) => {
+if (TRUST_PROXY) {
+  const hops = Number.parseInt(TRUST_PROXY, 10);
+  app.set("trust proxy", Number.isFinite(hops) ? hops : TRUST_PROXY);
+}
+
+const mcpRateLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  limit: RATE_LIMIT_MAX,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      jsonrpc: "2.0",
+      error: { code: -32002, message: "Too many requests. Slow down and retry shortly." },
+      id: null,
+    });
+  },
+});
+
+app.post("/mcp", mcpRateLimiter, async (req: Request, res: Response) => {
   const token = extractBearerToken(req);
 
   if (!token) {
@@ -102,6 +135,20 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`pr-reviewer remote MCP server listening on http://${HOST}:${PORT}/mcp`);
+// Fail fast if the pattern table can't be populated: serving requests against
+// an empty or unreachable failure_patterns table would make every check
+// silently useless rather than visibly broken. Schema migrations run before
+// this process starts (see the Dockerfile CMD); this only fills the data.
+async function start() {
+  const seeded = await seedFailurePatterns(prisma);
+  console.log(`Failure patterns ready (${seeded} upserted).`);
+
+  app.listen(PORT, HOST, () => {
+    console.log(`pr-reviewer remote MCP server listening on http://${HOST}:${PORT}/mcp`);
+  });
+}
+
+start().catch((error) => {
+  console.error(`MCP server failed to start: ${formatErrorForLog(error)}`);
+  process.exit(1);
 });

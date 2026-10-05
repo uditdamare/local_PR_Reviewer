@@ -272,6 +272,22 @@ source turns up.
       or public-only) — this HTTP server is designed for Claude Code/
       Desktop's remote-MCP header support (`claude mcp add --header`)
       specifically, not the claude.ai website.
+
+  **Deploy-readiness gaps found and closed afterward**: (1) the image
+  originally started the server against whatever database it was given, so
+  a fresh hosted Postgres would have had no `failure_patterns` table and
+  every check would fail — the Dockerfile `CMD` now runs `prisma migrate
+  deploy` first, and the server upserts the curated patterns itself
+  (`src/db/seed-patterns.ts`, shared with `npm run db:seed`) before it
+  listens, exiting non-zero rather than serving against an empty table.
+  (2) the `/mcp` endpoint had no request cap — the very missing-rate-limiting
+  shape this tool flags in other people's MRs — so it now has a per-IP
+  limiter (`RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS`, default 60/min) applied
+  before the auth check, with `TRUST_PROXY` for correct client IPs behind a
+  platform proxy. Both verified against a genuinely empty Postgres in
+  Docker: 0 tables → migration applied → 6 patterns seeded → real tool call
+  returned 200; a burst then returned 401s until the cap and 429 after, with
+  `/health` unaffected; a container restart was a no-op (no duplicates).
 - [ ] Evaluated against 10-15 real MRs with actual precision/recall/abstain
       numbers recorded
 - [ ] README written: problem statement, architecture, failure-pattern list

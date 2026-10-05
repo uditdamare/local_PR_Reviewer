@@ -34,4 +34,8 @@ COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/package.json ./package.json
 
 EXPOSE 8080
-CMD ["node", "dist/mcp/http-server.js"]
+# Apply any pending schema migrations first (idempotent; a no-op once the
+# database is current), then start the server, which seeds the pattern rows
+# itself before it begins listening. If migration fails the container exits
+# instead of serving against a missing table.
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/mcp/http-server.js"]
