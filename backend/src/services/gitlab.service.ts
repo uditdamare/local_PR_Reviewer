@@ -3,6 +3,7 @@ import axios, {
 } from "axios";
 
 import { env } from "../config/env";
+import { projectTokenService } from "./project-token.service";
 
 import {
   GitLabDiff,
@@ -13,33 +14,47 @@ import {
 } from "../types/gitlab.types";
 
 export class GitLabService {
-  private readonly client: AxiosInstance;
+  private readonly clients = new Map<string, AxiosInstance>();
 
-  // `token` lets a caller override env.gitlab.token — used by the remote
-  // HTTP MCP server, which never holds anyone's GitLab token itself: each
-  // request supplies its own via an Authorization header, read per-request,
-  // never written to this server's environment or disk. The stdio server
-  // (local Claude Code/Desktop use) keeps using env.gitlab.token as before.
-  constructor(token?: string) {
-    const resolvedToken = token ?? env.gitlab.token;
+  // Token precedence per call:
+  //   1. `fixedToken`, if given. The remote HTTP MCP server always passes one:
+  //      each request supplies its own via an Authorization header, so that
+  //      server never reads the stored-token registry at all.
+  //   2. The token registered for that project in the /admin dashboard.
+  //   3. GITLAB_TOKEN from the environment (local default).
+  constructor(private readonly fixedToken?: string) {}
 
-    if (!resolvedToken) {
+  private async clientFor(projectId: string): Promise<AxiosInstance> {
+    const token =
+      this.fixedToken ??
+      (await projectTokenService.resolve(projectId)) ??
+      env.gitlab.token;
+
+    if (!token) {
       throw new Error(
-        "No GitLab token available — set GITLAB_TOKEN in the environment, " +
-          "or (for the remote HTTP server) supply an Authorization header.",
+        `No GitLab token available for project "${projectId}". Add one for it in the dashboard (/admin), ` +
+          "or set GITLAB_TOKEN in the environment.",
       );
     }
 
-    this.client = axios.create({
-      baseURL: `${env.gitlab.url}/api/v4`,
+    let client = this.clients.get(token);
 
-      headers: {
-        "PRIVATE-TOKEN": resolvedToken,
-        Accept: "application/json",
-      },
+    if (!client) {
+      client = axios.create({
+        baseURL: `${env.gitlab.url}/api/v4`,
 
-      timeout: 30_000,
-    });
+        headers: {
+          "PRIVATE-TOKEN": token,
+          Accept: "application/json",
+        },
+
+        timeout: 30_000,
+      });
+
+      this.clients.set(token, client);
+    }
+
+    return client;
   }
 
   /**
@@ -50,9 +65,10 @@ export class GitLabService {
     mergeRequestIid: number,
   ): Promise<GitLabMergeRequest> {
     const encodedProjectId = encodeURIComponent(projectId);
+    const client = await this.clientFor(projectId);
 
     const response =
-      await this.client.get<GitLabMergeRequest>(
+      await client.get<GitLabMergeRequest>(
         `/projects/${encodedProjectId}/merge_requests/${mergeRequestIid}`,
       );
 
@@ -67,9 +83,10 @@ export class GitLabService {
     mergeRequestIid: number,
   ): Promise<GitLabDiff[]> {
     const encodedProjectId = encodeURIComponent(projectId);
+    const client = await this.clientFor(projectId);
 
     const response =
-      await this.client.get<GitLabDiff[]>(
+      await client.get<GitLabDiff[]>(
         `/projects/${encodedProjectId}/merge_requests/${mergeRequestIid}/diffs`,
       );
 
@@ -84,9 +101,10 @@ export class GitLabService {
     ref: string,
   ): Promise<GitLabTreeItem[]> {
     const encodedProjectId = encodeURIComponent(projectId);
+    const client = await this.clientFor(projectId);
 
     const response =
-      await this.client.get<GitLabTreeItem[]>(
+      await client.get<GitLabTreeItem[]>(
         `/projects/${encodedProjectId}/repository/tree`,
         {
           params: {
@@ -116,8 +134,10 @@ export class GitLabService {
     const encodedFilePath =
       encodeURIComponent(filePath);
 
+    const client = await this.clientFor(projectId);
+
     const response =
-      await this.client.get<GitLabFile>(
+      await client.get<GitLabFile>(
         `/projects/${encodedProjectId}/repository/files/${encodedFilePath}`,
         {
           params: {
@@ -149,8 +169,9 @@ export class GitLabService {
     body: string,
   ): Promise<GitLabNote> {
     const encodedProjectId = encodeURIComponent(projectId);
+    const client = await this.clientFor(projectId);
 
-    const response = await this.client.post<GitLabNote>(
+    const response = await client.post<GitLabNote>(
       `/projects/${encodedProjectId}/merge_requests/${mergeRequestIid}/notes`,
       { body },
     );

@@ -20,3 +20,20 @@ model FailurePattern {
 
   @@map("failure_patterns")
 }
+
+// One GitLab token per project, encrypted at rest (AES-256-GCM, key from
+// TOKEN_ENCRYPTION_KEY). The plaintext is never stored or returned; only the
+// last four characters are kept for display.
+model ProjectToken {
+  id              Int      @id @default(autoincrement())
+  gitlabProjectId String   @unique
+  projectPath     String
+  projectName     String
+  encryptedToken  String
+  tokenHint       String
+  scopes          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("project_tokens")
+}

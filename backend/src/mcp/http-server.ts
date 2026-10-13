@@ -28,7 +28,9 @@ import { formatErrorForLog } from "../utils/format-error";
 // per-session state to manage, which also means no server-side risk of one
 // user's token leaking into another user's session.
 
-const PORT = Number.parseInt(process.env.HTTP_PORT ?? "8080", 10);
+// HTTP_PORT wins if set; otherwise honor PORT, which platforms like Railway
+// inject to say which port the app must listen on.
+const PORT = Number.parseInt(process.env.HTTP_PORT ?? process.env.PORT ?? "8080", 10);
 const HOST = process.env.HTTP_HOST ?? "0.0.0.0";
 const ALLOWED_HOSTS = process.env.ALLOWED_HOSTS?.split(",").map((h) => h.trim());
 

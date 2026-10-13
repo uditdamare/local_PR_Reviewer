@@ -288,6 +288,25 @@ source turns up.
   Docker: 0 tables → migration applied → 6 patterns seeded → real tool call
   returned 200; a burst then returned 401s until the cap and 429 after, with
   `/health` unaffected; a container restart was a no-op (no duplicates).
+
+  **Per-project token registry (local only)**: one global `GITLAB_TOKEN`
+  can't cover several projects when tokens are project-scoped (a project
+  access token for project 82 gets a 404 on project 85). A dashboard at
+  `/admin` on the local Express backend now stores one token per project,
+  AES-256-GCM encrypted in Postgres (`project_tokens`), never returned by
+  the API (only the last 4 characters), and validated against GitLab before
+  saving (it must be able to read the project; `api`-scoped tokens are
+  flagged write-capable). It requires `ADMIN_TOKEN` + `TOKEN_ENCRYPTION_KEY`
+  (disabled otherwise), only serves loopback connections, and ships a strict
+  nonce CSP. `GitLabService` resolves the token per call: explicit header
+  token (hosted server) > registry entry > `GITLAB_TOKEN`. The hosted
+  HTTP server deliberately never reads the registry, so the "no stored
+  tokens on the remote server" property still holds. Tested with synthetic
+  tokens against a fake GitLab (the real token was never copied into the
+  store): per-project token selection by ID and by path, an unregistered
+  project failing loudly instead of using the wrong token, wrong-key and
+  tampered ciphertext rejected, non-loopback access refused, plus the full
+  UI flow in a browser.
 - [ ] Evaluated against 10-15 real MRs with actual precision/recall/abstain
       numbers recorded
 - [ ] README written: problem statement, architecture, failure-pattern list

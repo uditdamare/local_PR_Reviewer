@@ -45,6 +45,12 @@ export const env = {
     maxRetries: readInt("LLM_MAX_RETRIES", 3),
     retryBaseDelayMs: readInt("LLM_RETRY_BASE_DELAY_MS", 1000),
   },
+  // Project-token registry (the /admin dashboard). Both are optional: without
+  // them the registry is simply unavailable and GITLAB_TOKEN is used as before.
+  // tokenEncryptionKey: 32 random bytes, base64 (openssl rand -base64 32).
+  // adminToken: shared secret the dashboard sends as X-Admin-Token.
+  tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY,
+  adminToken: process.env.ADMIN_TOKEN,
   reviewBatchMaxDiffChars: readInt("REVIEW_BATCH_MAX_DIFF_CHARS", 6000),
   reviewRelevantFileMaxChars: readInt("REVIEW_RELEVANT_FILE_MAX_CHARS", 3000),
   // Below this, a pattern match is treated as an abstain rather than a
