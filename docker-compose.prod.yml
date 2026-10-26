@@ -1,20 +1,27 @@
-# Production stack for the remote MCP server: three services.
+# Production stack for the remote MCP server.
 #
-#   caddy     HTTPS (automatic Let's Encrypt certificate) -> forwards to mcp
 #   mcp       backend/src/mcp/http-server.ts (the MCP server Claude connects to)
 #   postgres  holds the failure-pattern table
+#   caddy     OPTIONAL HTTPS front door; only started with `--profile caddy`
 #
 # There is deliberately NO frontend service: the Next.js app only talks to the
 # old /api/reviews local-repo flow and nothing here uses it.
 #
-# Run (from the repo root):
-#   cp deploy/.env.example deploy/.env        # then fill in the values
-#   docker compose -f docker-compose.prod.yml --env-file deploy/.env up -d --build
+# HTTPS is NOT handled by the default stack. Two ways to get it:
 #
-# Needs: a DNS name pointing at this host, and ports 80 + 443 reachable from the
-# internet (Let's Encrypt verifies the name over port 80). If the company already
-# runs its own TLS proxy/load balancer, delete the `caddy` service and publish
-# the mcp port to that proxy instead.
+#   A) The company's own proxy / load balancer terminates TLS (default).
+#      It forwards https://<DOMAIN>/... to this host's port MCP_PORT (8080).
+#        docker compose -f docker-compose.prod.yml --env-file deploy/.env up -d --build
+#      The mcp port is published on 127.0.0.1 only, which is right when the proxy
+#      runs on this same machine. If the proxy is on a different machine, set
+#      MCP_BIND=0.0.0.0 in deploy/.env AND firewall the port so only that proxy
+#      can reach it (the app has no TLS of its own).
+#
+#   B) No company proxy: let Caddy get a Let's Encrypt certificate itself. Needs
+#      a DNS name for this host and ports 80 + 443 open to the internet.
+#        docker compose -f docker-compose.prod.yml --env-file deploy/.env --profile caddy up -d --build
+#
+# Setup: cp deploy/.env.example deploy/.env, then fill in the values.
 #
 # On start, `mcp` applies database migrations and seeds the pattern rows itself,
 # so a brand-new empty Postgres needs no manual setup. Nothing irreplaceable
@@ -47,14 +54,19 @@ services:
     environment:
       GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL in deploy/.env}
       DATABASE_URL: postgresql://pr_reviewer:${POSTGRES_PASSWORD}@postgres:5432/pr_reviewer
-      # One reverse proxy (caddy) sits in front: needed so the rate limiter
-      # sees real client IPs instead of caddy's.
-      TRUST_PROXY: "1"
+      # Number of reverse-proxy hops in front of the app (the company proxy, or
+      # caddy). The rate limiter uses it to find the real client IP; too low and
+      # all users share one bucket. Add a hop per extra proxy/CDN in the chain.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      # The public hostname clients use. Requests whose Host header differs are
+      # rejected, so the proxy must pass the original Host through unchanged.
       ALLOWED_HOSTS: ${DOMAIN:?set DOMAIN in deploy/.env}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-60}
     # No GITLAB_TOKEN and no LLM_* here, deliberately: every caller sends their
     # own GitLab token in an Authorization header, and the agent-reasoned flow
-    # needs no LLM key. No `ports:` either; caddy reaches it on the compose network.
+    # needs no LLM key.
+    ports:
+      - "${MCP_BIND:-127.0.0.1}:${MCP_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
@@ -63,6 +75,7 @@ services:
       start_period: 40s
 
   caddy:
+    profiles: ["caddy"]
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:

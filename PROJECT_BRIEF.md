@@ -289,12 +289,18 @@ source turns up.
   returned 200; a burst then returned 401s until the cap and 429 after, with
   `/health` unaffected; a container restart was a no-op (no duplicates).
 
-  **One-command production stack**: `docker-compose.prod.yml` runs `caddy`
-  (automatic HTTPS) + `mcp` (the HTTP server) + `postgres`, for a cloud/IT
-  hand-off (`docker compose -f docker-compose.prod.yml --env-file deploy/.env
-  up -d --build`). There is no frontend service: the Next.js app only calls
-  the old `/api/reviews` local-repo flow and nothing here uses it. Only caddy
-  publishes ports; postgres and mcp are internal. Testing it end to end
+  **One-command production stack**: `docker-compose.prod.yml` runs `mcp`
+  (the HTTP server) + `postgres`, for a cloud/IT hand-off (`docker compose -f
+  docker-compose.prod.yml --env-file deploy/.env up -d --build`). HTTPS is
+  assumed to come from the company's own proxy/load balancer, which forwards
+  to the mcp port (published on 127.0.0.1 by default, `MCP_BIND` to change;
+  the proxy must pass the original Host and X-Forwarded-For); `caddy` is an
+  opt-in `--profile caddy` for hosts with no company proxy. There is no
+  frontend service: the Next.js app only calls the old `/api/reviews`
+  local-repo flow and nothing here uses it. Postgres is never published.
+  Both modes were verified, the default one by simulating a proxy's Host and
+  X-Forwarded-For headers and confirming the port is unreachable from the
+  LAN address. Testing it end to end
   caught a real bug: `ALLOWED_HOSTS` host validation also applied to
   `/health`, so Docker's, Railway's and any load balancer's health probe got
   a 403 and the app was marked unhealthy; `/health` is now answered before
