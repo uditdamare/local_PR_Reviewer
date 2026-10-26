@@ -1,0 +1,7 @@
+# {$DOMAIN} comes from the caddy service's environment (deploy/.env).
+# Caddy obtains and renews the TLS certificate for it automatically and
+# redirects http -> https. For DOMAIN=localhost it uses a local self-signed
+# certificate instead, which is handy for testing.
+{$DOMAIN} {
+	reverse_proxy mcp:8080
+}

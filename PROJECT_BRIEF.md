@@ -289,6 +289,19 @@ source turns up.
   returned 200; a burst then returned 401s until the cap and 429 after, with
   `/health` unaffected; a container restart was a no-op (no duplicates).
 
+  **One-command production stack**: `docker-compose.prod.yml` runs `caddy`
+  (automatic HTTPS) + `mcp` (the HTTP server) + `postgres`, for a cloud/IT
+  hand-off (`docker compose -f docker-compose.prod.yml --env-file deploy/.env
+  up -d --build`). There is no frontend service: the Next.js app only calls
+  the old `/api/reviews` local-repo flow and nothing here uses it. Only caddy
+  publishes ports; postgres and mcp are internal. Testing it end to end
+  caught a real bug: `ALLOWED_HOSTS` host validation also applied to
+  `/health`, so Docker's, Railway's and any load balancer's health probe got
+  a 403 and the app was marked unhealthy; `/health` is now answered before
+  the host check. Verified from an empty volume: HTTPS + redirect, a real tool
+  call through the proxy, Host-header protection still enforced on `/mcp`,
+  app-only restart idempotent, data surviving `down`/`up`.
+
   **Per-project token registry (local only)**: one global `GITLAB_TOKEN`
   can't cover several projects when tokens are project-scoped (a project
   access token for project 82 gets a 404 on project 85). A dashboard at

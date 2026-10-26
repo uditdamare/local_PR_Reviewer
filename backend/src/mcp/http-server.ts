@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import { hostHeaderValidation } from "@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js";
+import express from "express";
 import type { Request, Response } from "express";
 import { rateLimit } from "express-rate-limit";
 
@@ -69,10 +70,27 @@ function buildServer(gitlabToken: string): McpServer {
   return server;
 }
 
-const app = createMcpExpressApp({
-  host: HOST,
-  ...(ALLOWED_HOSTS ? { allowedHosts: ALLOWED_HOSTS } : {}),
+// Built by hand instead of createMcpExpressApp so /health can be answered
+// BEFORE the Host-header check. Docker, Railway and load balancers probe
+// /health with their own Host (127.0.0.1, healthcheck.railway.app, a pod IP...),
+// which ALLOWED_HOSTS would otherwise reject with a 403 and mark the app unhealthy.
+// It returns a constant {"status":"ok"}, so skipping host validation here is harmless.
+const app = express();
+
+app.get("/health", (_req: Request, res: Response) => {
+  res.json({ status: "ok" });
 });
+
+if (ALLOWED_HOSTS) {
+  app.use(hostHeaderValidation(ALLOWED_HOSTS));
+} else if (HOST === "0.0.0.0" || HOST === "::") {
+  console.warn(
+    `Warning: binding to ${HOST} without ALLOWED_HOSTS (no DNS-rebinding protection). ` +
+      "Set ALLOWED_HOSTS to the hostname this server is served at.",
+  );
+}
+
+app.use(express.json());
 
 if (TRUST_PROXY) {
   const hops = Number.parseInt(TRUST_PROXY, 10);
@@ -131,10 +149,6 @@ app.post("/mcp", mcpRateLimiter, async (req: Request, res: Response) => {
       });
     }
   }
-});
-
-app.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok" });
 });
 
 // Fail fast if the pattern table can't be populated: serving requests against

@@ -1,0 +1,84 @@
+# Production stack for the remote MCP server: three services.
+#
+#   caddy     HTTPS (automatic Let's Encrypt certificate) -> forwards to mcp
+#   mcp       backend/src/mcp/http-server.ts (the MCP server Claude connects to)
+#   postgres  holds the failure-pattern table
+#
+# There is deliberately NO frontend service: the Next.js app only talks to the
+# old /api/reviews local-repo flow and nothing here uses it.
+#
+# Run (from the repo root):
+#   cp deploy/.env.example deploy/.env        # then fill in the values
+#   docker compose -f docker-compose.prod.yml --env-file deploy/.env up -d --build
+#
+# Needs: a DNS name pointing at this host, and ports 80 + 443 reachable from the
+# internet (Let's Encrypt verifies the name over port 80). If the company already
+# runs its own TLS proxy/load balancer, delete the `caddy` service and publish
+# the mcp port to that proxy instead.
+#
+# On start, `mcp` applies database migrations and seeds the pattern rows itself,
+# so a brand-new empty Postgres needs no manual setup. Nothing irreplaceable
+# lives in the database (the patterns come from the repo), so the volume is for
+# convenience, not backup-critical.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pr_reviewer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: pr_reviewer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No `ports:` on purpose: only the mcp container can reach the database.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pr_reviewer -d pr_reviewer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mcp:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL in deploy/.env}
+      DATABASE_URL: postgresql://pr_reviewer:${POSTGRES_PASSWORD}@postgres:5432/pr_reviewer
+      # One reverse proxy (caddy) sits in front: needed so the rate limiter
+      # sees real client IPs instead of caddy's.
+      TRUST_PROXY: "1"
+      ALLOWED_HOSTS: ${DOMAIN:?set DOMAIN in deploy/.env}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-60}
+    # No GITLAB_TOKEN and no LLM_* here, deliberately: every caller sends their
+    # own GitLab token in an Authorization header, and the agent-reasoned flow
+    # needs no LLM key. No `ports:` either; caddy reaches it on the compose network.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      mcp:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
